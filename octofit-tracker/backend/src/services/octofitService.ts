@@ -72,11 +72,53 @@ export async function createTeam(input: unknown) {
 }
 
 export async function getLeaderboard() {
-  return [];
+  const leaderboard = await Activity.aggregate([
+    { $group: { _id: '$team', totalPoints: { $sum: '$points' } } },
+    { $lookup: { from: 'teams', localField: '_id', foreignField: '_id', as: 'team' } },
+    { $unwind: '$team' },
+    { $project: { _id: 0, teamName: '$team.name', totalPoints: 1 } },
+    { $sort: { totalPoints: -1, teamName: 1 } },
+  ]);
+
+  return leaderboard.map((entry, index) => ({
+    ...entry,
+    rank: index + 1,
+  }));
 }
 
-export async function suggestWorkouts(_userEmail: string) {
-  return Workout.find().limit(1).lean();
+export async function suggestWorkouts(userEmail: string) {
+  if (typeof userEmail !== 'string' || userEmail.trim().length === 0) {
+    throw Object.assign(new Error('Invalid user email'), { status: 400 });
+  }
+
+  const normalizedEmail = userEmail.trim().toLowerCase();
+  const user = await User.findOne({ email: normalizedEmail }).lean();
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { status: 404 });
+  }
+
+  const recentActivity = await Activity.find({ user: user._id }).sort({ occurredAt: -1 }).limit(5).lean();
+  const focusMap: Record<string, string> = {
+    run: 'endurance',
+    cycle: 'endurance',
+    swim: 'endurance',
+    walk: 'mobility',
+    stretch: 'mobility',
+    yoga: 'mobility',
+    strength: 'strength',
+    lift: 'strength',
+    sprint: 'endurance',
+  };
+
+  const inferredFocus =
+    (recentActivity[0]?.type ? focusMap[String(recentActivity[0].type).toLowerCase()] : undefined) ??
+    (typeof user.fitnessGoal === 'string' && user.fitnessGoal.trim().length > 0 ? user.fitnessGoal.trim().toLowerCase() : 'endurance');
+
+  const matchingWorkouts = await Workout.find({ focus: inferredFocus }).sort({ minutes: 1, title: 1 }).lean();
+  return matchingWorkouts.slice(0, 3).map((workout) => ({
+    ...workout,
+    reason: `Matches your ${inferredFocus} activity pattern${recentActivity[0]?.type ? ` and recent ${String(recentActivity[0].type).toLowerCase()} activity` : ''}`,
+  }));
 }
 
 export { User };
