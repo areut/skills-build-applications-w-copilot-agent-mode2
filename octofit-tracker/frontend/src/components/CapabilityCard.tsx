@@ -4,9 +4,12 @@ import { getJson } from '../api/client.js';
 type Props = {
   title: string;
   description: string;
-  endpoint: string;
-  dataKey: string;
-  emptyMessage: string;
+  endpoint?: string;
+  dataKey?: string;
+  emptyMessage?: string;
+  items?: Record<string, unknown>[] | null;
+  error?: string | null;
+  loading?: boolean;
 };
 
 function displayValue(value: unknown): string {
@@ -19,41 +22,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function CapabilityCard({ title, description, endpoint, dataKey, emptyMessage }: Props) {
-  const [items, setItems] = useState<Record<string, unknown>[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function CapabilityCard({ title, description, endpoint, dataKey, emptyMessage, items: itemsOverride, error: errorOverride, loading: loadingOverride }: Props) {
+  const [items, setItems] = useState<Record<string, unknown>[] | null>(itemsOverride ?? null);
+  const [error, setError] = useState<string | null>(errorOverride ?? null);
 
   useEffect(() => {
-    let active = true;
-    getJson<Record<string, unknown>>(endpoint)
-      .then((result) => {
-        const data = result[dataKey];
-        if (!Array.isArray(data) || !data.every(isRecord)) throw new Error(`Invalid ${title.toLowerCase()} response`);
-        if (active) setItems(data);
-      })
-      .catch((requestError: unknown) => {
-        if (active) setError(requestError instanceof Error ? requestError.message : 'An unexpected error occurred');
-      });
+    if (endpoint && dataKey && itemsOverride === undefined && errorOverride === undefined && loadingOverride === undefined) {
+      let active = true;
+      getJson<Record<string, unknown>>(endpoint)
+        .then((result) => {
+          const data = result[dataKey];
+          if (!Array.isArray(data) || !data.every(isRecord)) throw new Error(`Invalid ${title.toLowerCase()} response`);
+          if (active) setItems(data);
+        })
+        .catch((requestError: unknown) => {
+          if (active) setError(requestError instanceof Error ? requestError.message : 'An unexpected error occurred');
+        });
 
-    return () => {
-      active = false;
-    };
-  }, [dataKey, endpoint, title]);
+      return () => {
+        active = false;
+      };
+    }
+
+    return undefined;
+  }, [dataKey, endpoint, itemsOverride, errorOverride, loadingOverride, title]);
+
+  const resolvedItems = itemsOverride ?? items;
+  const resolvedError = errorOverride ?? error;
+  const isLoading = loadingOverride ?? (resolvedItems === null && resolvedError === null);
 
   return (
     <section className="card h-100">
       <div className="card-body">
         <h2 className="h4">{title}</h2>
         <p>{description}</p>
-        {error ? (
-          <p role="alert">Unable to load {title.toLowerCase()}: {error}</p>
-        ) : items === null ? (
+        {resolvedError ? (
+          <p role="alert">Unable to load {title.toLowerCase()}: {resolvedError}</p>
+        ) : isLoading ? (
           <p role="status">Loading {title.toLowerCase()}...</p>
-        ) : items.length === 0 ? (
-          <p role="status">{emptyMessage}</p>
+        ) : resolvedItems === null || resolvedItems.length === 0 ? (
+          <p role="status">{emptyMessage ?? 'No items available.'}</p>
         ) : (
           <ul className="list-group">
-            {items.map((item, index) => (
+            {resolvedItems.map((item, index) => (
               <li className="list-group-item" key={String(item._id ?? item.id ?? index)}>
                 {Object.entries(item)
                   .filter(([key]) => key !== '_id' && key !== '__v')
